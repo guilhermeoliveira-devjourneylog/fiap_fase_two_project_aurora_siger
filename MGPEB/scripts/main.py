@@ -15,7 +15,7 @@ class Estado(Enum):
     ALERTA = "alerta"
 
 # =========================
-# EVENTOS (FSM)
+# EVENTOS
 # =========================
 class Evento(Enum):
     INICIAR_DESCIDA = "iniciar_descida"
@@ -25,6 +25,14 @@ class Evento(Enum):
     ALTURA_BAIXA = "altura_baixa"
     POUSO_AUTORIZADO = "pouso_autorizado"
     POUSO_ABORTADO = "pouso_abortado"
+
+# =========================
+# DECISÃO
+# =========================
+class Decisao(Enum):
+    GO = "GO"
+    HOLD = "HOLD"
+    NO_GO = "NO_GO"
 
 # =========================
 # ALERTAS
@@ -56,7 +64,7 @@ class Alerta:
         return f"[T{self.tempo}] [ALERTA {self.severidade.name}] {self.modulo_id} - {self.tipo.value}: {self.descricao}"
 
 # =========================
-# MÁQUINA DE ESTADOS (FSM)
+# FSM
 # =========================
 class StateMachine:
     def __init__(self, modulo):
@@ -139,15 +147,49 @@ def densidade_ar(h, rho0=0.02, k=0.0001):
     return rho0 * math.exp(-k*h)
 
 # =========================
-# LÓGICA BOOLEANA
+# DECISION ENGINE
 # =========================
-def autorizar_pouso(modulo, ambiente):
-    C = modulo.combustivel > 20
-    A = ambiente["atmosfera"]
-    L = ambiente["area_livre"]
-    S = ambiente["sensores"]
+def decision_engine(modulo, ambiente, alertas):
+    score = 100
+    motivos = []
 
-    return (C and S) and (A or ambiente["modo_emergencia"])
+    if modulo.combustivel < 10:
+        score -= 50
+        motivos.append("Combustível crítico")
+    elif modulo.combustivel < 25:
+        score -= 20
+        motivos.append("Combustível baixo")
+
+    if modulo.velocidade > 50:
+        score -= 20
+        motivos.append("Velocidade alta")
+
+    if not ambiente["sensores"]:
+        score -= 30
+        motivos.append("Sensores offline")
+
+    if not ambiente["area_livre"]:
+        score -= 25
+        motivos.append("Área insegura")
+
+    if not ambiente["atmosfera"]:
+        score -= 10
+        motivos.append("Atmosfera instável")
+
+    for alerta in alertas:
+        if alerta.modulo_id == modulo.id:
+            score -= alerta.severidade.value * 5
+
+    score = max(0, score)
+
+    if score >= 70:
+        decisao = Decisao.GO
+    elif score >= 40:
+        decisao = Decisao.HOLD
+    else:
+        decisao = Decisao.NO_GO
+
+    return decisao, score, motivos
 
 # =========================
 # AMBIENTE
@@ -198,7 +240,7 @@ class MGPEB:
 
                 modulo.combustivel -= 1.5
 
-                # ALERTAS / EVENTOS
+                # ALERTAS
                 if modulo.combustivel < 10:
                     modulo.fsm.processar_evento(Evento.COMBUSTIVEL_CRITICO)
                     self.gerar_alerta(modulo, TipoAlerta.COMBUSTIVEL_CRITICO, Severidade.CRITICA, "Combustível crítico", tempo)
@@ -206,7 +248,7 @@ class MGPEB:
 
                 if not ambiente["sensores"]:
                     modulo.fsm.processar_evento(Evento.FALHA_SENSOR)
-                    self.gerar_alerta(modulo, TipoAlerta.FALHA_SENSOR, Severidade.ALTA, "Falha de sensor", tempo)
+                    self.gerar_alerta(modulo, TipoAlerta.FALHA_SENSOR, Severidade.ALTA, "Falha sensor", tempo)
                     break
 
                 if not ambiente["area_livre"]:
@@ -217,13 +259,30 @@ class MGPEB:
                 if modulo.altura < 100:
                     modulo.fsm.processar_evento(Evento.ALTURA_BAIXA)
 
+                # DECISÃO FINAL
                 if modulo.altura < 10:
-                    if autorizar_pouso(modulo, ambiente):
+                    decisao, score, motivos = decision_engine(modulo, ambiente, self.alertas)
+
+                    modulo.registrar(f"DECISÃO: {decisao.value} | Score={score}")
+                    for m in motivos:
+                        modulo.registrar(f" - {m}")
+
+                    if decisao == Decisao.GO:
                         modulo.fsm.processar_evento(Evento.POUSO_AUTORIZADO)
                         self.pousados.append(modulo)
+
+                    elif decisao == Decisao.HOLD:
+                        modulo.registrar("HOLD - aguardando condições melhores")
+
                     else:
                         modulo.fsm.processar_evento(Evento.POUSO_ABORTADO)
-                        self.gerar_alerta(modulo, TipoAlerta.POUSO_ABORTADO, Severidade.ALTA, "Pouso abortado", tempo)
+                        self.gerar_alerta(
+                            modulo,
+                            TipoAlerta.POUSO_ABORTADO,
+                            Severidade.CRITICA,
+                            f"NO-GO Score={score}",
+                            tempo
+                        )
                     break
 
             tempo += 1
