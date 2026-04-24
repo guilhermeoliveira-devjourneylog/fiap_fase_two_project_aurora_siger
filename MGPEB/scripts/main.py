@@ -4,7 +4,7 @@ import random
 from enum import Enum
 
 # =========================
-# ESTADOS DO MÓDULO
+# ESTADOS
 # =========================
 class Estado(Enum):
     ORBITA = "orbita"
@@ -15,27 +15,32 @@ class Estado(Enum):
     ALERTA = "alerta"
 
 # =========================
-# TIPOS DE ALERTA
+# EVENTOS (FSM)
+# =========================
+class Evento(Enum):
+    INICIAR_DESCIDA = "iniciar_descida"
+    COMBUSTIVEL_CRITICO = "combustivel_critico"
+    FALHA_SENSOR = "falha_sensor"
+    AREA_INSEGURA = "area_insegura"
+    ALTURA_BAIXA = "altura_baixa"
+    POUSO_AUTORIZADO = "pouso_autorizado"
+    POUSO_ABORTADO = "pouso_abortado"
+
+# =========================
+# ALERTAS
 # =========================
 class TipoAlerta(Enum):
     COMBUSTIVEL_CRITICO = "combustivel_critico"
     POUSO_ABORTADO = "pouso_abortado"
     FALHA_SENSOR = "falha_sensor"
     AREA_NAO_SEGURA = "area_nao_segura"
-    VELOCIDADE_ALTA = "velocidade_alta"
 
-# =========================
-# SEVERIDADE
-# =========================
 class Severidade(Enum):
     BAIXA = 1
     MEDIA = 2
     ALTA = 3
     CRITICA = 4
 
-# =========================
-# CLASSE ALERTA
-# =========================
 class Alerta:
     def __init__(self, tipo, severidade, descricao, modulo_id, tempo):
         self.tipo = tipo
@@ -45,13 +50,57 @@ class Alerta:
         self.tempo = tempo
 
     def __lt__(self, other):
-        return self.severidade.value > other.severidade.value  # prioridade maior primeiro
+        return self.severidade.value > other.severidade.value
 
     def __str__(self):
         return f"[T{self.tempo}] [ALERTA {self.severidade.name}] {self.modulo_id} - {self.tipo.value}: {self.descricao}"
 
 # =========================
-# CLASSE DO MÓDULO
+# MÁQUINA DE ESTADOS (FSM)
+# =========================
+class StateMachine:
+    def __init__(self, modulo):
+        self.modulo = modulo
+
+    def transition(self, novo_estado, motivo):
+        anterior = self.modulo.estado
+        self.modulo.estado = novo_estado
+        self.modulo.registrar(
+            f"TRANSIÇÃO: {anterior.value} → {novo_estado.value} | {motivo}"
+        )
+
+    def processar_evento(self, evento):
+        m = self.modulo
+
+        if m.estado == Estado.ORBITA:
+            if evento == Evento.INICIAR_DESCIDA:
+                self.transition(Estado.DESCIDA, "Início da descida")
+
+        elif m.estado == Estado.DESCIDA:
+            if evento == Evento.COMBUSTIVEL_CRITICO:
+                self.transition(Estado.ALERTA, "Combustível crítico")
+
+            elif evento == Evento.FALHA_SENSOR:
+                self.transition(Estado.ALERTA, "Falha sensor")
+
+            elif evento == Evento.AREA_INSEGURA:
+                self.transition(Estado.ALERTA, "Área insegura")
+
+            elif evento == Evento.ALTURA_BAIXA:
+                self.transition(Estado.APROXIMACAO, "Entrando em aproximação")
+
+        elif m.estado == Estado.APROXIMACAO:
+            if evento == Evento.POUSO_AUTORIZADO:
+                self.transition(Estado.POUSO, "Pouso autorizado")
+
+            elif evento == Evento.POUSO_ABORTADO:
+                self.transition(Estado.ALERTA, "Pouso abortado")
+
+        elif m.estado == Estado.POUSO:
+            self.transition(Estado.FINALIZADO, "Pouso concluído")
+
+# =========================
+# MÓDULO
 # =========================
 class Modulo:
     def __init__(self, id, prioridade, combustivel, massa, criticidade, eta):
@@ -67,6 +116,8 @@ class Modulo:
         self.velocidade = 0
         self.log = []
 
+        self.fsm = StateMachine(self)
+
     def registrar(self, msg):
         entry = f"[{self.id} | {self.estado.value}] {msg}"
         self.log.append(entry)
@@ -76,7 +127,7 @@ class Modulo:
         return (self.prioridade, -self.criticidade) < (other.prioridade, -other.criticidade)
 
 # =========================
-# MODELOS MATEMÁTICOS
+# MODELOS FÍSICOS
 # =========================
 def altura(t, h0, v0, g=3.71):
     return max(0, h0 - v0*t - 0.5*g*t**2)
@@ -88,7 +139,7 @@ def densidade_ar(h, rho0=0.02, k=0.0001):
     return rho0 * math.exp(-k*h)
 
 # =========================
-# LÓGICA DE POUSO
+# LÓGICA BOOLEANA
 # =========================
 def autorizar_pouso(modulo, ambiente):
     C = modulo.combustivel > 20
@@ -110,7 +161,7 @@ def gerar_ambiente():
     }
 
 # =========================
-# SISTEMA MGPEB
+# SISTEMA
 # =========================
 class MGPEB:
     def __init__(self):
@@ -121,20 +172,11 @@ class MGPEB:
     def adicionar_modulo(self, modulo):
         heapq.heappush(self.fila, modulo)
 
-    # =========================
-    # GERADOR DE ALERTA
-    # =========================
     def gerar_alerta(self, modulo, tipo, severidade, descricao, tempo):
         alerta = Alerta(tipo, severidade, descricao, modulo.id, tempo)
-
-        modulo.estado = Estado.ALERTA
         modulo.registrar(str(alerta))
-
         heapq.heappush(self.alertas, alerta)
 
-    # =========================
-    # SIMULAÇÃO
-    # =========================
     def simular(self):
         tempo = 0
 
@@ -142,83 +184,52 @@ class MGPEB:
             ambiente = gerar_ambiente()
             modulo = heapq.heappop(self.fila)
 
-            modulo.registrar("Iniciando descida")
+            modulo.fsm.processar_evento(Evento.INICIAR_DESCIDA)
 
             for t in range(1, 20):
-                modulo.estado = Estado.DESCIDA
-
                 modulo.altura = altura(t, modulo.altura, modulo.velocidade)
                 modulo.velocidade = velocidade(t, modulo.velocidade)
 
                 rho = densidade_ar(modulo.altura)
 
                 modulo.registrar(
-                    f"Altura={modulo.altura:.2f}m Vel={modulo.velocidade:.2f}m/s Densidade={rho:.5f}"
+                    f"Altura={modulo.altura:.2f} Vel={modulo.velocidade:.2f} Densidade={rho:.5f}"
                 )
 
-                # Consumo
                 modulo.combustivel -= 1.5
 
-                # ALERTA: combustível crítico
+                # ALERTAS / EVENTOS
                 if modulo.combustivel < 10:
-                    self.gerar_alerta(
-                        modulo,
-                        TipoAlerta.COMBUSTIVEL_CRITICO,
-                        Severidade.CRITICA,
-                        "Combustível abaixo de 10",
-                        tempo
-                    )
+                    modulo.fsm.processar_evento(Evento.COMBUSTIVEL_CRITICO)
+                    self.gerar_alerta(modulo, TipoAlerta.COMBUSTIVEL_CRITICO, Severidade.CRITICA, "Combustível crítico", tempo)
                     break
 
-                # ALERTA: falha sensor
                 if not ambiente["sensores"]:
-                    self.gerar_alerta(
-                        modulo,
-                        TipoAlerta.FALHA_SENSOR,
-                        Severidade.ALTA,
-                        "Sensores offline",
-                        tempo
-                    )
+                    modulo.fsm.processar_evento(Evento.FALHA_SENSOR)
+                    self.gerar_alerta(modulo, TipoAlerta.FALHA_SENSOR, Severidade.ALTA, "Falha de sensor", tempo)
                     break
 
-                # ALERTA: área insegura
                 if not ambiente["area_livre"]:
-                    self.gerar_alerta(
-                        modulo,
-                        TipoAlerta.AREA_NAO_SEGURA,
-                        Severidade.ALTA,
-                        "Área de pouso obstruída",
-                        tempo
-                    )
+                    modulo.fsm.processar_evento(Evento.AREA_INSEGURA)
+                    self.gerar_alerta(modulo, TipoAlerta.AREA_NAO_SEGURA, Severidade.ALTA, "Área insegura", tempo)
                     break
 
-                # Aproximação
                 if modulo.altura < 100:
-                    modulo.estado = Estado.APROXIMACAO
+                    modulo.fsm.processar_evento(Evento.ALTURA_BAIXA)
 
-                # Pouso
                 if modulo.altura < 10:
                     if autorizar_pouso(modulo, ambiente):
-                        modulo.estado = Estado.POUSO
-                        modulo.registrar("Pouso autorizado")
+                        modulo.fsm.processar_evento(Evento.POUSO_AUTORIZADO)
                         self.pousados.append(modulo)
                     else:
-                        self.gerar_alerta(
-                            modulo,
-                            TipoAlerta.POUSO_ABORTADO,
-                            Severidade.ALTA,
-                            "Condições não atendidas",
-                            tempo
-                        )
+                        modulo.fsm.processar_evento(Evento.POUSO_ABORTADO)
+                        self.gerar_alerta(modulo, TipoAlerta.POUSO_ABORTADO, Severidade.ALTA, "Pouso abortado", tempo)
                     break
 
             tempo += 1
 
         self.relatorio()
 
-    # =========================
-    # RELATÓRIO
-    # =========================
     def relatorio(self):
         print("\n===== RELATÓRIO FINAL =====")
         print(f"Pousados: {len(self.pousados)}")
@@ -226,9 +237,7 @@ class MGPEB:
 
         print("\n--- ALERTAS PRIORIZADOS ---")
         while self.alertas:
-            alerta = heapq.heappop(self.alertas)
-            print(alerta)
-
+            print(heapq.heappop(self.alertas))
 
 # =========================
 # EXECUÇÃO
