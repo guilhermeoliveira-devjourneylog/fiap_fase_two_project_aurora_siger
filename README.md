@@ -2,6 +2,8 @@
 
 [Run](MGPEB/doc/run.md)
 
+[Whitepaper](MGPEB/doc/whitepaper.md)
+
 [System Designer Use Cases](MGPEB/system_designer/use_cases.md)
 
 [System Designer Sequence](MGPEB/system_designer/sequence.md)
