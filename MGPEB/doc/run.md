@@ -7,3 +7,9 @@
 cd MGPEB
 python -m scripts.main
 ```
+
+Convert notebook for html
+cd notebooks
+```
+jupyter nbconvert --to html mgpeb.ipynb
+```
